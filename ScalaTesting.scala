@@ -275,6 +275,7 @@ object Main extends App{
   // ==============================================================
 
   // QUESTION: ARE WE MEANT TO APPLY THE SKYLINE ON THE FILTER PAIRS (200 > UNIQUE MOVIES)
+  // ALSO IS THERE A SIMPLER WAY TO DO THE SKYLINE THAN CARTESIAN?
   // OR THE REMAINING PAIRS THAT ARE IN <= 200 UNIQUE MOVIES?
   //Query 5: Multi-Iceberg Skyline Over Genre-Tag-User Triads
   //Files Used: movies.csv, tags.csv, ratings.csv
@@ -314,7 +315,6 @@ object Main extends App{
   // we will stay in the RDD area and perform cartesian() and get the dot product
   // basically get all possible pairs and then perform a case to compare
   // all entries of the output.
-  // Step 4: Perform a self-join via cartesian() to compute skyline
   // THIS IS THE MOST INTENSIVE QUERY  !!!
 
   val skylineRDD = avgRatingAndUsersByGenreTag.cartesian(avgRatingAndUsersByGenreTag)

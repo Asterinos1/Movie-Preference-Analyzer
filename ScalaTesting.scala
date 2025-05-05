@@ -274,6 +274,8 @@ object Main extends App{
   // End of Query 4
   // ==============================================================
 
+  // QUESTION: ARE WE MEANT TO APPLY THE SKYLINE ON THE FILTER PAIRS (200 > UNIQUE MOVIES)
+  // OR THE REMAINING PAIRS THAT ARE IN <= 200 UNIQUE MOVIES?
   //Query 5: Multi-Iceberg Skyline Over Genre-Tag-User Triads
   //Files Used: movies.csv, tags.csv, ratings.csv
   //Objective: For each (genre, tag) pair that appears in more than 200 movies, calculate:
@@ -307,10 +309,49 @@ object Main extends App{
   val avgRatingAndUsersByGenreTag = popularGenreTagPairsAndRatings
     .join(userByGenreTag)                                               //userByGenreTag-> (genre,tag),userCount))
 
-  avgRatingAndUsersByGenreTag.foreach(println)
-  //avgRatingAndUsersByGenreTag.saveAsTextFile("hdfs://localhost:9000/ml-latest/query5_output1")
+  //avgRatingAndUsersByGenreTag.foreach(println)
 
+  // we will stay in the RDD area and perform cartesian() and get the dot product
+  // basically get all possible pairs and then perform a case to compare
+  // all entries of the output.
+  // Step 4: Perform a self-join via cartesian() to compute skyline
+  // THIS IS THE MOST INTENSIVE QUERY  !!!
 
+  val skylineRDD = avgRatingAndUsersByGenreTag.cartesian(avgRatingAndUsersByGenreTag)
+
+    // The Dot product looks like this:
+    // (Genre, Tag)  (Rating, Users) (Genre, Tag)  (Rating, Users)
+    //  pair A       stats of A      pair A         stats of A
+    //  pair A       stats of A      pair B         stats of B
+    //  pair A       stats of A      pair C         stats of C
+    //  pair A       stats of A      pair D         stats of D
+    //  pair B       stats of B      pair A         stats of A
+    // ...
+
+    .filter { case (a, b) => a._1 != b._1 }     //we remove the duplicates.
+    .filter { case ((_, (ratingA, userA)), ((_, (ratingB, userB)))) =>
+      //we apply the domination condition
+      (ratingB >= ratingA && userB >= userA) && (ratingB > ratingA || userB > userA)
+    }
+    //at this point we only have the pairs where the B entry dominates the A entry
+
+    //Now we only keep the genre-tag pairs that are dominated
+    //getting rid of the ratings and user counts.
+    .map { case (a, _) => a._1 }
+
+    //however there might be a chance that multiple entries on part B of the cartesian
+    //dominate the same entry on part A. Therefore we need to use distinct to get rid of
+    //excess copies of the same genre-tag pair.
+    .distinct()
+
+  //finally, from our avgRatingAndUsersByGenreTag
+  //we want to keep the genre-tag pairs that don't belong in the dominated Keys.
+  val finalSkylineRDD = avgRatingAndUsersByGenreTag
+    .filter { case (key, _) => !skylineRDD.collect().contains(key) }
+
+  finalSkylineRDD.foreach(println)
+
+  //finalSkylineRDD.saveAsTextFile("hdfs://localhost:9000/ml-latest/query5_output1")
   // End of Query 5
   // ==============================================================
 */

@@ -1,6 +1,7 @@
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{col, avg, count}
-import org.apache.spark.sql.types.{StringType, StructField, StructType, DoubleType}
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions.{avg, col, count, row_number, sqrt, sum}
+import org.apache.spark.sql.types.{DoubleType, StringType, StructField, StructType}
 
 object Main extends App{
   val spark = SparkSession.builder
@@ -15,6 +16,11 @@ object Main extends App{
   val linksPathHDFS = "hdfs://localhost:9000/ml-latest/links.csv"
   val genomeTagsPathHDFS = "hdfs://localhost:9000/ml-latest/genome-tags.csv"
   val genomeScoresPathHDFS = "hdfs://localhost:9000/ml-latest/genome-scores.csv"
+
+  //FOR DEBUGGING ONLY PURPOSES
+  //val genomeScoresPathHDFS = "hdfs://localhost:9000/ml-small/genome-scores-trimmed.csv"
+  //val ratingsPathHDFS = "hdfs://localhost:9000/ml-small/ratings_trimmed.csv"
+
   //Defining the Output path of the query answers
   val outputPath = "hdfs://localhost:9000/ml-latest/"
 
@@ -111,49 +117,43 @@ object Main extends App{
     .map(line => line.split(",",2))                  //break the string into its components
     .map(fields => (fields(0), fields(1)))           //(tagId,tag)
 
-/*
   //Query 1: Iceberg Query — Top Tags by Genre with High Ratings
   //Files used: movies.csv, ratings.csv, tags.csv
   //Objective: Find genre-tag pairs that appear in more than 100 movies
   //           and have an average user rating greater than 4.0.
 
   //Finding the average Rating per movie
-  val avgRatingPerMovie = ratingsRDD
-    .map { case (userId, movieId, rating) => (movieId, (rating, 1)) }   // movieId → (rating, 1)
+  val avgRatingPerMovie = ratingsRDD                                    // avgRatingPerMovie -> (movieId, avg(Rating))
+    .map { case (userId, movieId, rating) => (movieId, (rating, 1)) }   // (movieId,(rating, 1))
     .reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2))                  // sum all the ratings and all the counts respectively
     .mapValues { case (sum, count) => sum / count }                     // compute the average (movieId, average)
 
   // Getting movieId - tag pairs (dropping the userId)
-  val movieTagPairs = tagsRDD
-    .map { case (userId, movieId, tag) => (movieId, tag) }    //(movieId,tag)
-
-
-  //WITH DISTINCT, QUERY 1 RETURNS NOTHING, WITHOUT DISTINCT, IT RETURNS SOME ANSWERS
-  //ACTUALLY, NOT HAVING DISTINCT MAKES MORE SENSE
-  //.distinct()                                               //different user might have used the same movieId-tag pair so we make sure there are no duplicates
+  val movieTagPairs = tagsRDD                                 //movieTagPairs -> (movieId,tag)
+    .map { case (userId, movieId, tag) => (movieId, tag) }
 
   // Getting movieId - Genre pairs
-  val movieGenrePairs = moviesRDD
+  val movieGenrePairs = moviesRDD                             //movieGenrePairs -> (movieId,genre)
     .flatMap { case (movieId, title, genres) =>
       genres
         .filter(genre => genre != "(no genres listed)")
-        .map( genre => (movieId, genre))                      //(movieId,genre)
+        .map( genre => (movieId, genre))
     }
 
   //Join movieId - tag pairs with movieId - Genre pairs on movieId
-  val tagGenreJoinedWithMovies = movieTagPairs.join(movieGenrePairs) //(movieId, (Tag,Genre))
+  val tagGenreJoinedWithMovies = movieTagPairs       //tagGenreJoinedWithMovies -> (movieId, (Tag,Genre))
+    .join(movieGenrePairs)
+    //.distinct()
 
-  val movieByTagGenreRating = tagGenreJoinedWithMovies
-    .join(avgRatingPerMovie)                                                      //movieByTagGenreRating -> (movieId ,((Tag,Genre),avgMovieRating))
+  val movieByTagGenreRating = tagGenreJoinedWithMovies     //movieByTagGenreRating -> (movieId ,((Tag,Genre),avgMovieRating))
+    .join(avgRatingPerMovie)
 
-  val tagGenreAndRatings = movieByTagGenreRating
+  val tagGenreAndRatings = movieByTagGenreRating                                  //tagGenreAndRatings -> (Tag,Genre),List(avg_rating_of_each_movie_associated)
     .map{ case(movieId, ((tag,genre),avgRating)) => ((tag,genre), avgRating)}     //((Tag,Genre),avgMovieRating)
-    .groupBy(_._1)                                                                //group by tag-genre pair [(Tag,Genre) → List(((Tag,Genre),avg_rating_of_each_movie_associated))]
-    .mapValues(list => list.map(tuple => tuple._2))                               //Simplify the values so we have (Tag,Genre) → List(avg_rating_of_each_movie_associated)
+    .groupByKey()                                                                 //group by tag-genre pair
 
-
-  val filteredGroupByTagGenrePair = tagGenreAndRatings
-    .filter(_._2.size > 100)                            //filter out the tag-genre pairs that have less than 100 average movie ratings associated with them(and thus movies)
+  val filteredGroupByTagGenrePair = tagGenreAndRatings            //filteredGroupByTagGenrePair -> filtered((Tag,Genre),List(avg_rating_of_each_movie_associated))
+    .filter(_._2/*.toSet*/.size > 100)                            //filter out the tag-genre pairs that have less than 100 average movie ratings associated with them(and thus movies)
 
 
   val icebergResults = filteredGroupByTagGenrePair
@@ -166,9 +166,8 @@ object Main extends App{
     .filter(tuple => tuple._2 > 4.0)                        //filter out the pairs that  have an average lower than 4.0
 
 
-  //icebergResults.saveAsTextFile("hdfs://localhost:9000/ml-latest/query1_output")
+  icebergResults.saveAsTextFile("hdfs://localhost:9000/ml-latest/query1_output")
   //icebergResults.foreach(println)
-
 
   // End of Query 1
   // ==============================================================
@@ -178,47 +177,50 @@ object Main extends App{
   //Objective: For each movie genre, find the most commonly used tag,
   //           and return the average rating of the movies it was used on.
 
-  val genreToTags = tagGenreJoinedWithMovies    //We get the movieId → (Tag,Genre)
-    .map(pairs => (pairs._2._2, pairs._2._1))   //we transform them to (Genre,Tag)
-    .groupByKey()                               //and we group by genre(So we have Genre -> List(Tags))
+  val genreTagCounts = tagGenreJoinedWithMovies           //We get the (movieId,(Tag,Genre))
+    .map { case(movieId,(tag,genre)) =>
+      ((genre,tag), 1)                                    //we transform them to ((Genre,Tag), 1)
+      }
+    .reduceByKey(_ + _)                                   //we count the instances of each pair
 
 
-  val mostPopularTagPerGenre = genreToTags
-    .mapValues { tagList =>
-      tagList
-        .map(tag => (tag, 1))                                   // Convert each tag to (tag, 1)
-        .groupBy { pair => pair._1 }                            // group by tag
-        .map { case (tag, list) => (tag, list.map(_._2).sum) }  // Count occurrences of each tag
-        .maxBy(pair => pair._2)                                 //take the most popular(the one with the most counts)
+  val mostUsedTagPerGenre = genreTagCounts                //mostUsedTagPerGenre -> (genre, (tag, count)), count = max, tag = most popular
+    .map{ case((genre,tag),count) =>
+      (genre, (tag, count))                               // Make genre the key
+    }
+    .reduceByKey { (a, b) => if (a._2 >= b._2) a else b } // Pick tag with the highest count for each genre
+
+  val tagGenrePairsByMovie  = tagGenreJoinedWithMovies
+    .map { case (movieId, (tag, genre)) =>               //we transform from (movieId, (tag, genre))
+      ((genre,tag), movieId)                             //to ((genre,tag), movieId)
+  }
+
+  val dominantTagGenre = mostUsedTagPerGenre
+    .map {
+      case (genre, (tag, count)) => ((genre, tag), count) //we make the key to be (genre,tag) so we can join with tagGenrePairsByMovie
     }
 
-  val broadcastPopularTags = sc.broadcast(                     // Broadcast most popular tag per genre
-    mostPopularTagPerGenre
-      .map { case (genre, (tag, _)) => (genre, tag) }          // Strip out count, keep (genre, tag)
-      .collectAsMap()                                          // Collect to map for broadcasting
-  )
+  val filteredMovieTagGenre = tagGenrePairsByMovie
+    .join(dominantTagGenre)                                               // ((genre, tag), (movieId, count))
+    .map { case ((genre, tag), (movieId, _)) => (movieId, (genre, tag)) } //we now have the movies of each pair
 
-  val filteredMovies = tagGenreJoinedWithMovies.filter { case (_, (tag, genre)) =>    //(movieId, (tag, genre))
-    broadcastPopularTags.value.get(genre).contains(tag)                               // Keep only movie-tag pairs with dominant tag
-  }
+  val movieGenreRatings = filteredMovieTagGenre
+    .join(avgRatingPerMovie)  // (movieId, ((genre, tag), avgRating))     //get the avg rating of each movie
 
-  val movieGenreRatings = filteredMovies.join(avgRatingPerMovie) // Join with average rating per movie → (movieId,( (tag,genre), avg_rating ) )
-
-  val genreRatingPairs = movieGenreRatings.map { case ( _, ( (tag,genre), rating)) =>
-    ((genre,tag), (rating, 1))                                       // Convert to ((genre,tag), (rating, 1)) for averaging
-  }
+  val genreRatingPairs = movieGenreRatings
+    .map { case ( _, ( (tag,genre), rating)) =>
+      ((genre,tag), (rating, 1))                                // Convert to ((genre,tag), (rating, 1)) for averaging
+    }
 
   val avgRatingPerGenreTag = genreRatingPairs
     .reduceByKey((x, y) => (x._1 + y._1, x._2 + y._2))          // Sum ratings and counts
     .mapValues(x => x._1 / x._2)                                // Compute average rating per genre
 
-  //avgRatingPerGenreTag.saveAsTextFile("hdfs://localhost:9000/ml-latest/query2_output")
-  avgRatingPerGenreTag.foreach(println)
+  avgRatingPerGenreTag.saveAsTextFile("hdfs://localhost:9000/ml-latest/query2_output")
+  //avgRatingPerGenreTag.foreach(println)
 
-  //QUESTION 1:DOES IT MATTER HOW WE RETURN THIS? ((genre,tag), avg_rating) or (genre, tag, avg_rating) or (genre, (tag, avg_rating))
   // End of Query 2
   // ==============================================================
-
 
   //Query 3: Iceberg — Tags That Are Both Popular and Relevant
   //Files Used: genome-scores.csv, genome-tags.csv
@@ -229,7 +231,7 @@ object Main extends App{
 
   val filteredTags = genomeScoresGrouped
     .mapValues{iterable => iterable               //go inside the list and for each (movieId,relevance) element,
-      .filter(_._2 > 0.6)                         //filter out those with relevance < 0.6
+      .filter(_._2 > 0.6)                         //filter out those with relevance < 0.6 (filtering around 0.4-0.6 is good)
     }
     .filter(_._2.map(_._1).toSet.size > 100)        //count the unique movies associated with each tag and filter out those that have < 100 movies
     .mapValues{list=> list                          //go inside the list again and for each (movieId,relevance) element,
@@ -244,19 +246,19 @@ object Main extends App{
     .join(filteredTags)                             //filteredTags -> (tagId, avg_relevance), join by tagId
     .map(tuple => tuple._2)                         //finalFilteredTags -> (tag, avg_relevance)
 
-  //QUESTION 2: HOW IS THE RELEVANCE METRIC CALCULATED? IS IT JACCARD INDEX?
-  //finalFilteredTags.saveAsTextFile("hdfs://localhost:9000/ml-latest/query3_output")
+  finalFilteredTags.saveAsTextFile("hdfs://localhost:9000/ml-latest/query3_output")
   //finalFilteredTags.foreach(println)
 
   // End of Query 3
   // ==============================================================
-
 
   //Query 4: Sentiment Estimation — Tags Associated with Ratings
   //Files Used: tags.csv, ratings.csv
   //Objective: Compute the average user rating for each user-assigned tag from tags.csv
 
   val tagByUserMovie = tagsRDD                            //tagsRDD ->(userId, movieId, tag)
+    .map(t => ((t._1, t._2, t._3))) // (userId, movieId, tag)
+    //.distinct()                   //we can put distinct here if we don't want to compute duplicate tags by same user(if same user spams the same tag multiple times)
     .map(tuple3 => ((tuple3._1, tuple3._2), tuple3._3))   //((userId, movieId), tag)
 
   val ratingByUserMovie = ratingsRDD                      //ratingsRDD -> (userId, movieId, rating)
@@ -268,15 +270,13 @@ object Main extends App{
     .reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2))    //compute sum of ratings and the count of those ratings associated with each tag
     .mapValues { case (total, count) => total / count}    //compute the average rating associated with each tag
 
-  //averageOfEachTag.saveAsTextFile("hdfs://localhost:9000/ml-latest/query4_output")
+  averageOfEachTag.saveAsTextFile("hdfs://localhost:9000/ml-latest/query4_output")
   //averageOfEachTag.foreach(println)
 
   // End of Query 4
   // ==============================================================
 
-  
-  // QUESTION: ARE WE MEANT TO APPLY THE SKYLINE ON THE FILTER PAIRS (200 > UNIQUE MOVIES)
-  // OR THE REMAINING PAIRS THAT ARE IN <= 200 UNIQUE MOVIES?
+
   //Query 5: Multi-Iceberg Skyline Over Genre-Tag-User Triads
   //Files Used: movies.csv, tags.csv, ratings.csv
   //Objective: For each (genre, tag) pair that appears in more than 200 movies, calculate:
@@ -298,7 +298,7 @@ object Main extends App{
       (movieId,(userId,tag))              //(movieId,(userId,tag))
     }
 
-  val userByGenreTag = userTagByMovie               //userTagGenreByMovie -> (movieId, ((userId,tag),genre))
+  val userByGenreTag = userTagByMovie               //userByGenreTag-> (genre,tag),userCount))
     .join(movieGenrePairs)                          //movieGenrePairs -> (movieId,genre)
     .map{ case (movieId, ((userId,tag),genre)) =>
       ((genre,tag), userId)                         //(genre,tag), userId)
@@ -307,19 +307,18 @@ object Main extends App{
     .groupByKey()                                   //group by genre-tag pair
     .mapValues(_.size)                              //count the userIds therefor the unique users
 
-  val avgRatingAndUsersByGenreTag = popularGenreTagPairsAndRatings
+  val avgRatingAndUsersByGenreTag = popularGenreTagPairsAndRatings      //avgRatingAndUsersByGenreTag -> ((genre,tag),(avg_rating,userCount))
     .join(userByGenreTag)                                               //userByGenreTag-> (genre,tag),userCount))
 
   //avgRatingAndUsersByGenreTag.foreach(println)
 
-  // we will stay in the RDD area and perform cartesian() and get the dot product
+  // we will perform cartesian() and get the dot product
   // basically get all possible pairs and then perform a case to compare
   // all entries of the output.
-  // THIS IS THE MOST INTENSIVE QUERY  !!!
+  // THIS IS THE MOST INTENSIVE QUERY SO FAR !!!
 
-  val skylineRDD = avgRatingAndUsersByGenreTag.cartesian(avgRatingAndUsersByGenreTag)
-
-
+  val skylineRDD = avgRatingAndUsersByGenreTag
+    .cartesian(avgRatingAndUsersByGenreTag)
     // The Dot product looks like this:
     // (Genre, Tag)  (Rating, Users) (Genre, Tag)  (Rating, Users)
     //  pair A       stats of A      pair A         stats of A
@@ -328,20 +327,14 @@ object Main extends App{
     //  pair A       stats of A      pair D         stats of D
     //  pair B       stats of B      pair A         stats of A
     //  ...
-
     .filter { case (a, b) => a._1 != b._1 }     //we remove the duplicates.
     .filter { case ((_, (ratingA, userA)), ((_, (ratingB, userB)))) =>
       //we apply the domination condition
       (ratingB >= ratingA && userB >= userA) && (ratingB > ratingA || userB > userA)
     }
     //at this point we only have the pairs where the B entry dominates the A entry
-
     //Now we only keep the genre-tag pairs that are dominated
-    //getting rid of the ratings and user counts.
     .map { case (a, _) => (a._1, a._2) }
-//    .map { case (a, _) => a._1}
-
-
     //however there might be a chance that multiple entries on part B of the cartesian
     //dominate the same entry on part A. Therefore we need to use distinct to get rid of
     //excess copies of the same genre-tag pair.
@@ -349,24 +342,14 @@ object Main extends App{
 
   //finally, from our avgRatingAndUsersByGenreTag
   //we want to keep the genre-tag pairs that don't belong in the dominated Keys.
-
-//  val dominatedKeys = skylineRDD.map(key => (key, null))
-//  val allKeys = avgRatingAndUsersByGenreTag.map { case (key, value) => (key, value) }
-//  val finalSkylineRDD = allKeys.subtractByKey(dominatedKeys)
-
   val finalSkylineRDD = avgRatingAndUsersByGenreTag.subtractByKey(skylineRDD)
 
-//  val finalSkylineRDD = avgRatingAndUsersByGenreTag
-//    .filter { case (key, _) => !skylineRDD.collect().contains(key) }
+  finalSkylineRDD.saveAsTextFile("hdfs://localhost:9000/ml-latest/query5_output")
+  //finalSkylineRDD.foreach(println)
 
-  finalSkylineRDD.foreach(println)
-
-  //finalSkylineRDD.saveAsTextFile("hdfs://localhost:9000/ml-latest/query5_output1")
   // End of Query 5
   // ==============================================================
-  // ==============================================================
-*/
-/*
+
   //Query 6: Skyline Query — Non-Dominated Movies in Multiple Dimensions
   //Files Used: ratings.csv, genome-scores.csv
   //Objective: Identify movies that are not dominated in average rating, rating count,
@@ -390,12 +373,9 @@ object Main extends App{
   //we will utilize the self join operation
   //create 2 copies of the same dataframe.
   //we will name them a and b, and compare each line
-
-  //Question: we are creating logical references and not deep physical copies, is that ok? is this functional?
   val statsA = movieStats.alias("a")
   val statsB = movieStats.alias("b")
 
-  //
   val dominationCondition =
     (col("b.avg_rating") >= col("a.avg_rating")) &&   //check if a row in "b" is better than a row in "a"
       (col("b.rating_count") >= col("a.rating_count")) &&
@@ -411,11 +391,14 @@ object Main extends App{
   val skylineDF = statsA.join(statsB, dominationCondition, "left_anti")
 
   //skylineDF.show()
-  //skylineDF.rdd.saveAsTextFile("hdfs://localhost:9000/ml-latest/query6_output")
+  skylineDF
+    .write
+    .option("header", true)
+    .csv("hdfs://localhost:9000/ml-latest/query6_output")
 
   // End of Query 6
   // ==============================================================
-*/
+
   //Query 7: Correlation Between Tag Relevance and Average Ratings
   //Files Used: ratings.csv, genome-scores.csv
   //Objective: Estimate the Pearson correlation between movies average genome tag relevance,
@@ -437,6 +420,14 @@ object Main extends App{
   //println(s"Pearson correlation: $correlation")
   //joinedResult.show()
 
+  spark.sparkContext.parallelize(Seq(s"Pearson correlation: $correlation"))
+    .saveAsTextFile("hdfs://localhost:9000/ml-latest/query7_output_Pearson")
+
+  joinedResult
+    .write
+    .option("header", true)
+    .csv("hdfs://localhost:9000/ml-latest/query7_output_Averages")
+
   // End of Query 7
   // ==============================================================
 
@@ -446,37 +437,61 @@ object Main extends App{
   //their liked movies (rated with >4.0), with the tag profile of the target movie, using Cosine
   //Similarity
 
-  val chosenMovieID = "79132"
-  val tagRelevance = genomeScoresDF
-    .select(col("MovieId"), col("TagId"), col("Relevance"))
-    .where(col("MovieId") === chosenMovieID)
+  val chosenMovieID = "79132" //Inception
 
-  val filterRatings = ratingsFileDF         //filterRatings -> |UserId|MovieId| of movies rated by user > 4.0 (user's liked movies)
+  val tagRelevanceOfChosenMovie = genomeScoresDF   //tagRelevanceOfChosenMovie -> |TagId|Relevance| where MovieId == chosenMovieID
+    .select(col("TagId"), col("Relevance"))
+    .where(col("MovieId") === chosenMovieID)       // This is the tag profile of the chosen movie
+
+  val likedMoviesDF = ratingsFileDF         //likedMoviesDF -> |UserId|MovieId| of movies rated by user > 4.0 (user's liked movies)
     .select(col("UserId"), col("MovieId"))
-    .where(col("Rating") > 4.0)
+    .where(col("Rating") > 4.0)             //filter only the liked movies of each user (Rating > 4.0)
 
-  val joinedByMovies = filterRatings        //joinedByMovies -> |MovieId|UserId|TagId|Relevance|
+  val joinedByMovies = likedMoviesDF        //joinedByMovies -> |MovieId|UserId|TagId|Relevance|
     .join(genomeScoresDF, Seq("MovieId"))
 
-  ///////////////CURSED///////////////////////
-//  val avgTagRelevancePerUser = joinedByMovies
-//    .groupBy(col("UserId"), col("tagId"))
-//    .agg(avg("Relevance").alias("avg_tag_relevance_per_user"))
+  val avgTagRelevancePerUser = joinedByMovies     //avgTagRelevancePerUser -> |UserId|TagId|avg_tag_relevance_per_user|
+    .groupBy(col("UserId"), col("TagId"))
+    .agg(avg("Relevance").alias("avg_tag_relevance_per_user"))  // Compute the average of each tag relevance of all user's liked movies
 
-  joinedByMovies.show()
-    //avgTagRelevancePerUser.show()
-    //filterRatings.show()
-    //tagRelevance.show()
+  val tagProfilesJoined = avgTagRelevancePerUser    //tagProfilesJoined -> |UserId|TagId|user_score|target_score|
+    .join(tagRelevanceOfChosenMovie, Seq("TagId"))
+    .select(
+      col("UserId"),
+      col("TagId"),
+      col("avg_tag_relevance_per_user").alias("user_score"),    //Some renaming
+      col("Relevance").alias("target_score")                    //Some renaming
+    )
+
+  val cosineComponentsDF = tagProfilesJoined
+    .withColumn("dot", col("user_score") * col("target_score"))                   //Create a new column where product between the user score and target score is calculated
+    .withColumn("user_norm_sqr", col("user_score") * col("user_score"))           //Create a new column where the square of user score is calculated
+    .withColumn("target_norm_sqr", col("target_score") * col("target_score"))     //Create a new column where the square of target score is calculated
+    .groupBy(col("UserId"))                                                       //Group By UserId
+    .agg(                                                                         //Sum each column with itself
+      sum("dot").alias("dot_product"),
+      sum("user_norm_sqr").alias("user_norm_sqr"),
+      sum("target_norm_sqr").alias("target_norm_sqr")
+    )
+    .withColumn("cosine_similarity",                                              //Compute the Cosine Similarity
+      col("dot_product") / (sqrt(col("user_norm_sqr")) * sqrt(col("target_norm_sqr")))
+    )                                                                             //Until now ->|UserId|dot_product|user_norm_sqr|target_norm_sqr|cosine_similarity|
+    .select(col("UserId"),col("cosine_similarity"))                               //cosineComponentsDF -> |UserId|cosine_similarity|
+
+  //cosineComponentsDF.show()
+  cosineComponentsDF
+    .write
+    .option("header", true)
+    .csv("hdfs://localhost:9000/ml-latest/query8_output")
 
   // End of Query 8
   // ==============================================================
-
 
   //Query 9: Tag-Relevance Anomaly — Overhyped Low-Rated Movies
   //Files Used: genome-scores.csv, ratings.csv, genome-tags.csv
   //Objective: Identify movies that are highly relevant (>=0.8) to popular tags of this list:
   //(“action”,“classic”, “thriller”), but have very low average user ratings <2.5.
-
+  /* LOOSEN UP THE THRESHOLDS TO GET ANSWERS*/
   val famous_tags = genomeTagsDF //we filter only the tagIds for the desired tags
     .filter(col("Tag").isin("action", "classic", "thriller"))
 
@@ -488,8 +503,10 @@ object Main extends App{
     .filter(col("avg_rating_per_movie") < 2.5)                     //filter those with average rating lower than 2.5
 
   //overhypedMovies.show()
-  //overhypedMovies.rdd.saveAsTextFile("hdfs://localhost:9000/ml-latest/query9_output")
-  //QUESTION:ME THN PANW LOGIKH DEN YPARXEI KAMIA TAINIA POU NA EINAI OVERHYPED
+  overhypedMovies
+    .write
+    .option("header", true)
+    .csv("hdfs://localhost:9000/ml-latest/query9_output")
 
   // End of Query 9
   // ==============================================================
@@ -500,9 +517,19 @@ object Main extends App{
   //preferences inferred from high-rated (>4.0) movies) are closest (based on Cosine Similarity) to
   //that movie’s tag profile.
 
+  val topK = 10
+  val topKUsers = cosineComponentsDF
+    .orderBy(col("cosine_similarity").desc)
+    .limit(topK)
+  val topKRanked = topKUsers.withColumn("Rank", row_number().over(Window.orderBy(col("cosine_similarity").desc))) //adding rank column
+
+  topKRanked
+    .write
+    .option("header", true)
+    .csv("hdfs://localhost:9000/ml-latest/query10_output")
+
   // End of Query 10
   // ==============================================================
 
-  //QUESTION:is it better to use .mapValues + .reduceByKey over .groupByKey when doing aggregations?
   spark.stop()
 }

@@ -22,16 +22,16 @@ object Main extends App{
   FileSystem.setDefaultUri(spark.sparkContext.hadoopConfiguration, hdfsURI)
   val hdfs = FileSystem.get(spark.sparkContext.hadoopConfiguration)
 
-  val dataPath = "/user/chrisa/ml-latest"
+  val dataPath = "/user/chrisa/ml-latest/"
   val outputPath = "/user/fp25_1"
 
   //Defining the Paths of the data
-  val moviesPathHDFS = dataPath + "/movies.csv"
-  val ratingsPathHDFS = dataPath + "/ratings.csv"
-  val tagsPathHDFS = dataPath + "/tags.csv"
-  //val linksPathHDFS = dataPath + "/links.csv"        NOT NEEDED
-  val genomeTagsPathHDFS = dataPath + "/genome-tags.csv"
-  val genomeScoresPathHDFS = dataPath + "/genome-scores.csv"
+  val moviesPathHDFS = dataPath + "movies.csv"
+  val ratingsPathHDFS = dataPath + "ratings.csv"
+  val tagsPathHDFS = dataPath + "tags.csv"
+  //val linksPathHDFS = dataPath + "links.csv"        NOT NEEDED
+  val genomeTagsPathHDFS = dataPath + "genome-tags.csv"
+  val genomeScoresPathHDFS = dataPath + "genome-scores.csv"
 
   val outputPathQuery1 = outputPath + "/ProjectOutputs/Query1"
   val outputPathQuery2 = outputPath + "/ProjectOutputs/Query2"
@@ -104,13 +104,10 @@ object Main extends App{
     .map(row => (row.getAs[String]("MovieId"), row.getAs[String]("Title"), row.getAs[String]("Genre").split("\\|")))
 
   //ratings.csv
-  val rawRatingsRDD = sc.textFile(ratingsPathHDFS)
-  val ratingsHeader = rawRatingsRDD.first()
+  val ratingsRDD = ratingsFileDF
+    .rdd
+    .map(row => (row.getString(0), row.getString(1), row.getDouble(2)))
 
-  val ratingsRDD = rawRatingsRDD
-    .filter(row => row != ratingsHeader)                        //skip the csv headers.
-    .map(line => line.split(","))                               //break the string into its components
-    .map(fields => (fields(0), fields(1), fields(2).toDouble))  //(userId, movieId, rating)
 
   //tags.csv
   //We need to make the rdd this way for this file because some tags have commas
@@ -123,10 +120,9 @@ object Main extends App{
   val rawGenomeScoresRDD = sc.textFile(genomeScoresPathHDFS)
   val genomeScoresHeader = rawGenomeScoresRDD.first()
 
-  val genomeScoresRDD = rawGenomeScoresRDD
-    .filter(row => row != genomeScoresHeader)                   //skip the csv headers.
-    .map(line => line.split(",",3))                               //break the string into its components
-    .map(fields => (fields(0), fields(1), fields(2).toDouble))           //(movieId, tagId, relevance)
+  val genomeScoresRDD = genomeScoresDF
+    .rdd
+    .map(row => (row.getString(0), row.getString(1), row.getDouble(2)))
 
   //genome-tags.csv
   val rawGenomeTagsRDD = sc.textFile(genomeTagsPathHDFS)
@@ -185,7 +181,9 @@ object Main extends App{
     .mapValues(tuple => tuple._1 / tuple._2)                //compute average
     .filter(tuple => tuple._2 > 4.0)                        //filter out the pairs that  have an average lower than 4.0
 
-
+  if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery1))) {
+    hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery1), true)
+  }
   icebergResults.saveAsTextFile(outputPathQuery1)
   //icebergResults.foreach(println)
 
@@ -236,6 +234,9 @@ object Main extends App{
     .reduceByKey((x, y) => (x._1 + y._1, x._2 + y._2))          // Sum ratings and counts
     .mapValues(x => x._1 / x._2)                                // Compute average rating per genre
 
+  if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery2))) {
+    hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery2), true)
+  }
   avgRatingPerGenreTag.saveAsTextFile(outputPathQuery2)
   //avgRatingPerGenreTag.foreach(println)
 
@@ -266,6 +267,9 @@ object Main extends App{
     .join(filteredTags)                             //filteredTags -> (tagId, avg_relevance), join by tagId
     .map(tuple => tuple._2)                         //finalFilteredTags -> (tag, avg_relevance)
 
+  if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery3))) {
+    hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery3), true)
+  }
   finalFilteredTags.saveAsTextFile(outputPathQuery3)
   //finalFilteredTags.foreach(println)
 
@@ -290,6 +294,9 @@ object Main extends App{
     .reduceByKey((a, b) => (a._1 + b._1, a._2 + b._2))    //compute sum of ratings and the count of those ratings associated with each tag
     .mapValues { case (total, count) => total / count}    //compute the average rating associated with each tag
 
+  if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery4))) {
+    hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery4), true)
+  }
   averageOfEachTag.saveAsTextFile(outputPathQuery4)
   //averageOfEachTag.foreach(println)
 
@@ -364,6 +371,9 @@ object Main extends App{
   //we want to keep the genre-tag pairs that don't belong in the dominated Keys.
   val finalSkylineRDD = avgRatingAndUsersByGenreTag.subtractByKey(skylineRDD)
 
+  if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery5))) {
+    hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery5), true)
+  }
   finalSkylineRDD.saveAsTextFile(outputPathQuery5)
   //finalSkylineRDD.foreach(println)
 
@@ -413,6 +423,7 @@ object Main extends App{
   //skylineDF.show()
   skylineDF
     .write
+    .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery6)
 
@@ -440,11 +451,16 @@ object Main extends App{
   //println(s"Pearson correlation: $correlation")
   //joinedResult.show()
 
+
+  if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery7 + "/Pearson"))) {
+    hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery7 + "/Pearson"), true)
+  }
   spark.sparkContext.parallelize(Seq(s"Pearson correlation: $correlation"))
     .saveAsTextFile(outputPathQuery7 + "/Pearson")
 
   joinedResult
     .write
+    .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery7 + "/Averages")
 
@@ -501,6 +517,7 @@ object Main extends App{
   //cosineComponentsDF.show()
   cosineComponentsDF
     .write
+    .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery8)
 
@@ -525,6 +542,7 @@ object Main extends App{
   //overhypedMovies.show()
   overhypedMovies
     .write
+    .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery9)
 
@@ -545,6 +563,7 @@ object Main extends App{
 
   topKRanked
     .write
+    .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery10)
 

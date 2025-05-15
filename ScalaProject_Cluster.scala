@@ -336,6 +336,7 @@ object Main extends App{
 
   val avgRatingAndUsersByGenreTag = popularGenreTagPairsAndRatings      //avgRatingAndUsersByGenreTag -> ((genre,tag),(avg_rating,userCount))
     .join(userByGenreTag)                                               //userByGenreTag-> (genre,tag),userCount))
+    .repartition(200)
 
   //avgRatingAndUsersByGenreTag.foreach(println)
 
@@ -487,6 +488,7 @@ object Main extends App{
     .join(genomeScoresDF, Seq("MovieId"))
 
   val avgTagRelevancePerUser = joinedByMovies     //avgTagRelevancePerUser -> |UserId|TagId|avg_tag_relevance_per_user|
+    .repartition(300, col("UserId"))
     .groupBy(col("UserId"), col("TagId"))
     .agg(avg("Relevance").alias("avg_tag_relevance_per_user"))  // Compute the average of each tag relevance of all user's liked movies
 

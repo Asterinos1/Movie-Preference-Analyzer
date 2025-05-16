@@ -38,11 +38,6 @@ object Main extends App{
   val outputPathQuery3 = outputPath + "/ProjectOutputs/Query3"
   val outputPathQuery4 = outputPath + "/ProjectOutputs/Query4"
   val outputPathQuery5 = outputPath + "/ProjectOutputs/Query5"
-  val outputPathQuery6 = outputPath + "/ProjectOutputs/Query6"
-  val outputPathQuery7 = outputPath + "/ProjectOutputs/Query7"
-  val outputPathQuery8 = outputPath + "/ProjectOutputs/Query8"
-  val outputPathQuery9 = outputPath + "/ProjectOutputs/Query9"
-  val outputPathQuery10 = outputPath + "/ProjectOutputs/Query10"
 
   val sc = spark.sparkContext
 

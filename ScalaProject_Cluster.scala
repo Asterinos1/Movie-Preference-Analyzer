@@ -518,7 +518,7 @@ object Main extends App{
       col("dot_product") / (sqrt(col("user_norm_sqr")) * sqrt(col("target_norm_sqr")))
     )                                                                             //Until now ->|UserId|dot_product|user_norm_sqr|target_norm_sqr|cosine_similarity|
     .select(col("UserId"),col("cosine_similarity"))                               //cosineComponentsDF -> |UserId|cosine_similarity|
-    //.persist
+    //.persist()
 
   //cosineComponentsDF.show()
   cosineComponentsDF

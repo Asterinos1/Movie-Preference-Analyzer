@@ -236,10 +236,10 @@ object Main extends App{
     .join(genomeScoresDF, Seq("MovieId"))
 
   val avgTagRelevancePerUser = joinedByMovies     //avgTagRelevancePerUser -> |UserId|TagId|avg_tag_relevance_per_user|
-    .repartition(300, col("UserId"))
+    .repartition(400, col("UserId"))
     .groupBy(col("UserId"), col("TagId"))
     .agg(avg("Relevance").alias("avg_tag_relevance_per_user"))  // Compute the average of each tag relevance of all user's liked movies
-    .repartition(300, col("TagId"))
+    .repartition(400, col("TagId"))
 
   val tagProfilesJoined = avgTagRelevancePerUser    //tagProfilesJoined -> |UserId|TagId|user_score|target_score|
     .join(tagRelevanceOfChosenMovie, Seq("TagId"))
@@ -249,7 +249,7 @@ object Main extends App{
       col("avg_tag_relevance_per_user").alias("user_score"),    //Some renaming
       col("Relevance").alias("target_score")                    //Some renaming
     )
-    .repartition(300, col("UserId"))
+    .repartition(400, col("UserId"))
 
   val cosineComponentsDF = tagProfilesJoined
     .withColumn("dot", col("user_score") * col("target_score"))                   //Create a new column where product between the user score and target score is calculated
@@ -265,7 +265,7 @@ object Main extends App{
       col("dot_product") / (sqrt(col("user_norm_sqr")) * sqrt(col("target_norm_sqr")))
     )                                                                             //Until now ->|UserId|dot_product|user_norm_sqr|target_norm_sqr|cosine_similarity|
     .select(col("UserId"),col("cosine_similarity"))                               //cosineComponentsDF -> |UserId|cosine_similarity|
-    //.persist()
+    .persist()
 
   //cosineComponentsDF.show()
   cosineComponentsDF

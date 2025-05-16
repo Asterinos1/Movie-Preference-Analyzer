@@ -457,6 +457,7 @@ object Main extends App{
     hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery7 + "/Pearson"), true)
   }
   spark.sparkContext.parallelize(Seq(s"Pearson correlation: $correlation"))
+    .coalesce(1)
     .saveAsTextFile(outputPathQuery7 + "/Pearson")
 
   joinedResult
@@ -491,6 +492,7 @@ object Main extends App{
     .repartition(300, col("UserId"))
     .groupBy(col("UserId"), col("TagId"))
     .agg(avg("Relevance").alias("avg_tag_relevance_per_user"))  // Compute the average of each tag relevance of all user's liked movies
+    .repartition(300, col("TagId"))
 
   val tagProfilesJoined = avgTagRelevancePerUser    //tagProfilesJoined -> |UserId|TagId|user_score|target_score|
     .join(tagRelevanceOfChosenMovie, Seq("TagId"))
@@ -500,6 +502,7 @@ object Main extends App{
       col("avg_tag_relevance_per_user").alias("user_score"),    //Some renaming
       col("Relevance").alias("target_score")                    //Some renaming
     )
+    .repartition(300, col("UserId"))
 
   val cosineComponentsDF = tagProfilesJoined
     .withColumn("dot", col("user_score") * col("target_score"))                   //Create a new column where product between the user score and target score is calculated
@@ -564,6 +567,7 @@ object Main extends App{
   val topKRanked = topKUsers.withColumn("Rank", row_number().over(Window.orderBy(col("cosine_similarity").desc))) //adding rank column
 
   topKRanked
+    .coalesce(1)
     .write
     .mode("overwrite")
     .option("header", true)

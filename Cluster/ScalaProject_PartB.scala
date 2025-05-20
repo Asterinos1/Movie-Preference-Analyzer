@@ -322,6 +322,8 @@ object Main extends App{
     .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery10)
+
+  cosineComponentsDF.unpersist()    //maybe unecessary since it is right before the end of program, but good practice nontheless
   // End of Query 10
   // ==============================================================
 

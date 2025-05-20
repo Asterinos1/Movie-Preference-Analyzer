@@ -323,7 +323,7 @@ object Main extends App{
     .option("header", true)
     .csv(outputPathQuery10)
 
-  cosineComponentsDF.unpersist()    //maybe unecessary since it is right before the end of program, but good practice nontheless
+  cosineComponentsDF.unpersist()    //maybe unnecessary since it is right before the end of program, but good practice nonetheless
   // End of Query 10
   // ==============================================================
 

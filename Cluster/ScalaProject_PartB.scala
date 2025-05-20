@@ -216,6 +216,33 @@ object Main extends App{
   // End of Query 7
   // ==============================================================
 
+  
+  //** SWAPED QUERIES 8 AND 9 SINCE QUERY 8 IS MORE TIME CONSUMING.
+  //Query 9: Tag-Relevance Anomaly — Overhyped Low-Rated Movies
+  //Files Used: genome-scores.csv, ratings.csv, genome-tags.csv
+  //Objective: Identify movies that are highly relevant (>=0.8) to popular tags of this list:
+  //(“action”,“classic”, “thriller”), but have very low average user ratings <2.5.
+  /* LOOSEN UP THE THRESHOLDS TO GET ANSWERS*/
+  val famous_tags = genomeTagsDF //we filter only the tagIds for the desired tags
+    .filter(col("Tag").isin("action", "classic", "thriller"))
+
+  val overhypedMovies = famous_tags.join(genomeScoresDF, "TagId")  //we join the genome scores table to the filtered tags
+    .groupBy("MovieId")                                            //then calculate the average relevance of each movie
+    .agg(avg("Relevance").as("avg_relevance_to_tags"))
+    .filter(col("avg_relevance_to_tags")>= 0.8 )
+    .join(avgRatingPerMovieDF, "MovieId")                          //join the average ratings table
+    .filter(col("avg_rating_per_movie") < 2.5)                     //filter those with average rating lower than 2.5
+
+  //overhypedMovies.show()
+  overhypedMovies
+    .write
+    .mode("overwrite")
+    .option("header", true)
+    .csv(outputPathQuery9)
+
+  // End of Query 9
+  // ==============================================================
+
   //Query 8: Reverse Nearest Neighbor — Match Users to a Movie’s Tag Vector
   //Files Used: ratings.csv, genome-scores.csv
   //Objective: Match users to a movie of your choice by comparing the average tag preferences of
@@ -277,31 +304,6 @@ object Main extends App{
   // End of Query 8
   // ==============================================================
 
-  //Query 9: Tag-Relevance Anomaly — Overhyped Low-Rated Movies
-  //Files Used: genome-scores.csv, ratings.csv, genome-tags.csv
-  //Objective: Identify movies that are highly relevant (>=0.8) to popular tags of this list:
-  //(“action”,“classic”, “thriller”), but have very low average user ratings <2.5.
-  /* LOOSEN UP THE THRESHOLDS TO GET ANSWERS*/
-  val famous_tags = genomeTagsDF //we filter only the tagIds for the desired tags
-    .filter(col("Tag").isin("action", "classic", "thriller"))
-
-  val overhypedMovies = famous_tags.join(genomeScoresDF, "TagId")  //we join the genome scores table to the filtered tags
-    .groupBy("MovieId")                                            //then calculate the average relevance of each movie
-    .agg(avg("Relevance").as("avg_relevance_to_tags"))
-    .filter(col("avg_relevance_to_tags")>= 0.8 )
-    .join(avgRatingPerMovieDF, "MovieId")                          //join the average ratings table
-    .filter(col("avg_rating_per_movie") < 2.5)                     //filter those with average rating lower than 2.5
-
-  //overhypedMovies.show()
-  overhypedMovies
-    .write
-    .mode("overwrite")
-    .option("header", true)
-    .csv(outputPathQuery9)
-
-  // End of Query 9
-  // ==============================================================
-
   //Query 10: Reverse Top-K Neighborhood Users Using Semantic Tag Profiles
   //Files Used: ratings.csv, genome-scores.csv
   //Objective: Given a target movie, find the top-K users whose semantic tag profiles (i.e., tag
@@ -320,7 +322,6 @@ object Main extends App{
     .mode("overwrite")
     .option("header", true)
     .csv(outputPathQuery10)
-
   // End of Query 10
   // ==============================================================
 

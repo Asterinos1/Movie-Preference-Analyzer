@@ -232,7 +232,9 @@ object Main extends App{
   if (hdfs.exists(new org.apache.hadoop.fs.Path(outputPathQuery2))) {
     hdfs.delete(new org.apache.hadoop.fs.Path(outputPathQuery2), true)
   }
-  avgRatingPerGenreTag.saveAsTextFile(outputPathQuery2)
+  avgRatingPerGenreTag
+  .coalesce(1)
+  .saveAsTextFile(outputPathQuery2)
   //avgRatingPerGenreTag.foreach(println)
 
   // End of Query 2

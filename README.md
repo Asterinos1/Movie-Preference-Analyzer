@@ -1,4 +1,4 @@
-#Movie Preference Analyzer
+# Movie Preference Analyzer
 
 A Scala + Apache Spark project for **functional big data analytics** on the [MovieLens](https://grouplens.org/datasets/movielens/) dataset, developed as part of the INF424 course: *Functional Programming, Analytics and Applications* at the **Technical University of Crete** (Spring Semester 2024–2025).
 

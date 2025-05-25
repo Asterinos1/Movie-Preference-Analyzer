@@ -30,7 +30,7 @@ object Main extends App{
   val ratingsSchema = StructType(Seq(
     StructField("UserId", StringType, nullable = false),
     StructField("MovieId", StringType, nullable = false),
-    StructField("Rating", DoubleType, nullable = false),
+    StructField("Rating", DoubleType, nullable = false)
   ))
 
   val tagSchema = StructType(Seq(

@@ -1,5 +1,4 @@
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions.{avg, col, count, row_number, sqrt, sum}
 import org.apache.spark.sql.types.{DoubleType, StringType, StructField, StructType}
 

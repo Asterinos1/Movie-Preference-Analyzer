@@ -5,8 +5,8 @@ A Scala + Apache Spark project for **functional big data analytics** on the [Mov
 This project implements a variety of advanced queries using both **Spark RDDs** and **DataFrames**, with all code written in Scala and tested on the SoftNet Cluster of TUC.
 
 Authors:
-@Asterinos1
-@eNiaro
+- @Asterinos1
+- @eNiaro
 
 ## Deployment Modes
 

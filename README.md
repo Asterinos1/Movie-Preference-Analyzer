@@ -31,7 +31,7 @@ CSV files used:
 ## Technologies
 - Scala
 - Apache Spark
-- HDFS (SoftNet Cluster)
+- HDFS (TUC SoftNet Cluster)
 
 ## Build Configuration
 

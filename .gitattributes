@@ -1,0 +1,20 @@
+# Auto-detect text files and normalize line endings to LF (cross-platform compatibility)
+* text=auto eol=lf
+
+# Explicitly declare text files
+*.scala text eol=lf
+*.conf text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf
+
+# Ignore large binary files or archives
+*.zip binary
+*.jar binary
+*.class binary
+
+# GitHub Linguist overrides (forces repo language stats)
+*.scala linguist-language=Scala
+*.conf linguist-language=HOCON
